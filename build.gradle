@@ -1,0 +1,59 @@
+plugins {
+    id 'net.neoforged.moddev' version '2.0.78'
+    id 'java'
+}
+
+group = mod_group
+version = mod_version
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(java_version as int)
+    withSourcesJar()
+}
+
+repositories {
+    maven { url = 'https://maven.neoforged.net/releases' }
+    maven { url = 'https://maven.parchmentmc.org' }
+    // sable-companion публично доступен
+    maven {
+        name = 'RyanHCode public'
+        url = 'https://maven.ryanhcode.dev/releases'
+        content {
+            includeGroup 'dev.ryanhcode.sable-companion'
+        }
+    }
+    mavenCentral()
+}
+
+neoForge {
+    version = neoforge_version
+
+    parchment {
+        mappingsVersion = parchment_version
+        minecraftVersion = parchment_minecraft
+    }
+
+    mods {
+        simreset {
+            sourceSet sourceSets.main
+        }
+    }
+
+    runs {
+        server {
+            server()
+            ideName = 'NeoForge Server'
+            gameDirectory = project.file('run/server')
+        }
+    }
+}
+
+dependencies {
+    // sable-companion: публичный maven (нужен для Pose3d, BoundingBox3i и т.п.)
+    compileOnly "dev.ryanhcode.sable-companion:sable-companion-common-${minecraft_version}:1.6.0"
+
+    // Локальные jar из папки libs/ — скопируй сюда:
+    //   • sable-neoforge-1.21.1-2.0.3.jar   (sable физ. движок)
+    //   • aeronautics-neoforge-1.21.1-X.jar  (содержит simulated внутри)
+    compileOnly fileTree(dir: 'libs', include: '*.jar')
+}

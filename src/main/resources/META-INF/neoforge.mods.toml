@@ -1,0 +1,32 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "Apache-2.0"
+issueTrackerURL = "https://github.com/Yukovsky/SimReset/issues"
+
+[[mods]]
+    modId = "simreset"
+    version = "1.2.0"
+    displayName = "SimReset"
+    authors = "Yukovsky"
+    description = "Adds /sable disassemble and /sable reassemble commands."
+
+[[dependencies.simreset]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,)"
+    ordering = "NONE"
+    side = "SERVER"
+
+[[dependencies.simreset]]
+    modId = "sable"
+    type = "required"
+    versionRange = "[1.2.2,)"
+    ordering = "AFTER"
+    side = "SERVER"
+
+[[dependencies.simreset]]
+    modId = "simulated"
+    type = "required"
+    versionRange = "[1.2.1,)"
+    ordering = "AFTER"
+    side = "SERVER"

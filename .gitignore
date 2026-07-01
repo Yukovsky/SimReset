@@ -1,0 +1,39 @@
+# Gradle / build
+build/
+.gradle/
+out/
+run/
+runs/
+*.class
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Logs
+*.log
+compile_output.txt
+server_sublevel_out.txt
+
+# Temporary files
+tmp/
+
+# Local compileOnly dependencies (download separately, see README)
+libs/*.jar
+
+# Extracted metadata / research clones
+extract/
+simulated_repo/
+
+# AI / Claude Code
+.claude/
+memory/
+
+# Publishing checklist (local only)
+PUBLISHING_RULES.md
+
+# Windows reserved device names
+nul
