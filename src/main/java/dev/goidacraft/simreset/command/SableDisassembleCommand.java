@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
+import dev.goidacraft.simreset.SimResetConfig;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
@@ -97,7 +98,9 @@ public class SableDisassembleCommand {
                             .executes(ctx -> executeDisassemble(ctx,
                                 filterByName(StringArgumentType.getString(ctx, "name"))))))
                     .then(Commands.literal("nearest")
-                        .executes(SableDisassembleCommand::executeDisassembleNearest))
+                        .executes(ctx -> executeDisassembleNearest(ctx, false))
+                        .then(Commands.literal("confirm")
+                            .executes(ctx -> executeDisassembleNearest(ctx, true))))
                     .then(Commands.literal("entity")
                         .then(Commands.argument("targets", EntityArgument.entities())
                             .executes(ctx -> executeDisassembleTargets(ctx,
@@ -118,7 +121,9 @@ public class SableDisassembleCommand {
                             .executes(ctx -> executeReassemble(ctx,
                                 filterByName(StringArgumentType.getString(ctx, "name"))))))
                     .then(Commands.literal("nearest")
-                        .executes(SableDisassembleCommand::executeReassembleNearest))
+                        .executes(ctx -> executeReassembleNearest(ctx, false))
+                        .then(Commands.literal("confirm")
+                            .executes(ctx -> executeReassembleNearest(ctx, true))))
                     .then(Commands.literal("entity")
                         .then(Commands.argument("targets", EntityArgument.entities())
                             .executes(ctx -> executeReassembleTargets(ctx,
@@ -168,11 +173,11 @@ public class SableDisassembleCommand {
         return executeDisassembleTargets(ctx, targets);
     }
 
-    private static int executeDisassembleNearest(CommandContext<CommandSourceStack> ctx)
+    private static int executeDisassembleNearest(CommandContext<CommandSourceStack> ctx, boolean confirm)
             throws CommandSyntaxException {
-        ServerLevel level = ctx.getSource().getLevel();
-        ServerSubLevel nearest = resolveNearest(level, ctx.getSource().getPosition());
-        return executeDisassembleTargets(ctx, nearest == null ? List.of() : List.of(nearest));
+        ServerSubLevel nearest = checkNearestDistance(ctx, confirm);
+        if (nearest == null) return 0;
+        return executeDisassembleTargets(ctx, List.of(nearest));
     }
 
     private static int executeDisassembleTargets(CommandContext<CommandSourceStack> ctx,
@@ -192,11 +197,35 @@ public class SableDisassembleCommand {
         return executeReassembleTargets(ctx, targets);
     }
 
-    private static int executeReassembleNearest(CommandContext<CommandSourceStack> ctx)
+    private static int executeReassembleNearest(CommandContext<CommandSourceStack> ctx, boolean confirm)
+            throws CommandSyntaxException {
+        ServerSubLevel nearest = checkNearestDistance(ctx, confirm);
+        if (nearest == null) return 0;
+        return executeReassembleTargets(ctx, List.of(nearest));
+    }
+
+    /**
+     * Находит ближайший саб-левел и проверяет лимит расстояния (config: nearest.maxDistance).
+     * Если лимит превышен и confirm=false — шлёт предупреждение и возвращает null (команда не выполняется).
+     * confirm=true форсирует выполнение независимо от расстояния.
+     */
+    private static ServerSubLevel checkNearestDistance(CommandContext<CommandSourceStack> ctx, boolean confirm)
             throws CommandSyntaxException {
         ServerLevel level = ctx.getSource().getLevel();
-        ServerSubLevel nearest = resolveNearest(level, ctx.getSource().getPosition());
-        return executeReassembleTargets(ctx, nearest == null ? List.of() : List.of(nearest));
+        Vec3 origin = ctx.getSource().getPosition();
+        ServerSubLevel nearest = resolveNearest(level, origin);
+        if (nearest == null) throw ERROR_NO_SUBLEVELS.create();
+
+        double maxDistance = SimResetConfig.NEAREST_MAX_DISTANCE.get();
+        double distance = distanceTo(nearest, origin);
+        if (!confirm && distance > maxDistance) {
+            ctx.getSource().sendFailure(Component.literal(String.format(
+                "[SimReset] Ближайшая физ. сущность находится на расстоянии %.1f блоков "
+                    + "(лимит %.1f). Повторите команду с 'confirm' в конце, чтобы подтвердить.",
+                distance, maxDistance)));
+            return null;
+        }
+        return nearest;
     }
 
     private static int executeReassembleTargets(CommandContext<CommandSourceStack> ctx,
@@ -355,20 +384,24 @@ public class SableDisassembleCommand {
         if (!(level instanceof SubLevelContainerHolder holder)) return null;
 
         ServerSubLevel nearest = null;
-        double bestDistSq = Double.MAX_VALUE;
+        double bestDist = Double.MAX_VALUE;
         for (SubLevel sl : holder.sable$getPlotContainer().getAllSubLevels()) {
             if (!(sl instanceof ServerSubLevel ssl)) continue;
-            Vector3dc center = ssl.boundingBox().center();
-            double dx = center.x() - origin.x;
-            double dy = center.y() - origin.y;
-            double dz = center.z() - origin.z;
-            double distSq = dx * dx + dy * dy + dz * dz;
-            if (distSq < bestDistSq) {
-                bestDistSq = distSq;
+            double dist = distanceTo(ssl, origin);
+            if (dist < bestDist) {
+                bestDist = dist;
                 nearest = ssl;
             }
         }
         return nearest;
+    }
+
+    private static double distanceTo(ServerSubLevel sl, Vec3 origin) {
+        Vector3dc center = sl.boundingBox().center();
+        double dx = center.x() - origin.x;
+        double dy = center.y() - origin.y;
+        double dz = center.z() - origin.z;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
     /**

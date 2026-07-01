@@ -2,6 +2,7 @@ package dev.goidacraft.simreset;
 
 import dev.goidacraft.simreset.command.SableDisassembleCommand;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -9,7 +10,8 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 @Mod("simreset")
 public class SimResetMod {
 
-    public SimResetMod(IEventBus modBus) {
+    public SimResetMod(IEventBus modBus, ModContainer container) {
+        SimResetConfig.register(container);
         NeoForge.EVENT_BUS.addListener(this::onRegisterCommands);
     }
 
