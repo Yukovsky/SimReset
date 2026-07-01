@@ -7,6 +7,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
+import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.mixinterface.plot.SubLevelContainerHolder;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
@@ -20,20 +21,25 @@ import dev.ryanhcode.sable.sublevel.storage.serialization.SubLevelSerializer;
 import dev.ryanhcode.sable.sublevel.storage.serialization.SubLevelStorage;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaterniondc;
 import org.joml.Vector3d;
+import org.joml.Vector3dc;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -41,8 +47,15 @@ import java.util.function.Predicate;
 
 /**
  * Добавляет в корень /sable подкоманды:
- *   /sable disassemble all | uuid <uuid> | name <name>
- *   /sable reassemble  all | uuid <uuid> | name <name>
+ *   /sable disassemble all | uuid <uuid> | name <name> | nearest | entity <targets>
+ *   /sable reassemble  all | uuid <uuid> | name <name> | nearest | entity <targets>
+ *
+ * nearest       — ближайший к исполнителю команды загруженный саб-левел ("физ. сущность").
+ * entity <targets> — саб-левели, в которых физически находятся выбранные сущности.
+ *                     <targets> — стандартный ванильный entity-selector (@a, @e, @p, @r, @s
+ *                     и любые другие, добавленные другими модами/сервером, например @n).
+ * nearest/entity работают только с уже загруженными саб-левелами (без storage-скана),
+ * так как сущности физически присутствуют лишь в загруженных чанках.
  *
  * Поддерживает sable 1.2.2+ и 2.0.3+, aeronautics 1.2.1+ и 1.3.0+.
  * Storage-скан незагруженных саблевелов доступен только с sable 2.x.
@@ -82,7 +95,14 @@ public class SableDisassembleCommand {
                         .then(Commands.argument("name", StringArgumentType.string())
                             .suggests(SUGGEST_NAME)
                             .executes(ctx -> executeDisassemble(ctx,
-                                filterByName(StringArgumentType.getString(ctx, "name")))))))
+                                filterByName(StringArgumentType.getString(ctx, "name"))))))
+                    .then(Commands.literal("nearest")
+                        .executes(SableDisassembleCommand::executeDisassembleNearest))
+                    .then(Commands.literal("entity")
+                        .then(Commands.argument("targets", EntityArgument.entities())
+                            .executes(ctx -> executeDisassembleTargets(ctx,
+                                resolveByEntities(ctx.getSource().getLevel(),
+                                    EntityArgument.getEntities(ctx, "targets")))))))
 
                 .then(Commands.literal("reassemble")
                     .then(Commands.literal("all")
@@ -96,7 +116,14 @@ public class SableDisassembleCommand {
                         .then(Commands.argument("name", StringArgumentType.string())
                             .suggests(SUGGEST_NAME)
                             .executes(ctx -> executeReassemble(ctx,
-                                filterByName(StringArgumentType.getString(ctx, "name")))))))
+                                filterByName(StringArgumentType.getString(ctx, "name"))))))
+                    .then(Commands.literal("nearest")
+                        .executes(SableDisassembleCommand::executeReassembleNearest))
+                    .then(Commands.literal("entity")
+                        .then(Commands.argument("targets", EntityArgument.entities())
+                            .executes(ctx -> executeReassembleTargets(ctx,
+                                resolveByEntities(ctx.getSource().getLevel(),
+                                    EntityArgument.getEntities(ctx, "targets")))))))
         );
     }
 
@@ -137,9 +164,21 @@ public class SableDisassembleCommand {
 
     private static int executeDisassemble(CommandContext<CommandSourceStack> ctx,
                                           SubLevelFilter filter) throws CommandSyntaxException {
+        List<ServerSubLevel> targets = findSubLevels(ctx.getSource().getLevel(), filter);
+        return executeDisassembleTargets(ctx, targets);
+    }
+
+    private static int executeDisassembleNearest(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
         ServerLevel level = ctx.getSource().getLevel();
-        List<ServerSubLevel> targets = findSubLevels(level, filter);
+        ServerSubLevel nearest = resolveNearest(level, ctx.getSource().getPosition());
+        return executeDisassembleTargets(ctx, nearest == null ? List.of() : List.of(nearest));
+    }
+
+    private static int executeDisassembleTargets(CommandContext<CommandSourceStack> ctx,
+                                                  List<ServerSubLevel> targets) throws CommandSyntaxException {
         if (targets.isEmpty()) throw ERROR_NO_SUBLEVELS.create();
+        ServerLevel level = ctx.getSource().getLevel();
 
         int count = doDisassemble(level, targets, false);
         ctx.getSource().sendSuccess(
@@ -149,9 +188,21 @@ public class SableDisassembleCommand {
 
     private static int executeReassemble(CommandContext<CommandSourceStack> ctx,
                                          SubLevelFilter filter) throws CommandSyntaxException {
+        List<ServerSubLevel> targets = findSubLevels(ctx.getSource().getLevel(), filter);
+        return executeReassembleTargets(ctx, targets);
+    }
+
+    private static int executeReassembleNearest(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
         ServerLevel level = ctx.getSource().getLevel();
-        List<ServerSubLevel> targets = findSubLevels(level, filter);
+        ServerSubLevel nearest = resolveNearest(level, ctx.getSource().getPosition());
+        return executeReassembleTargets(ctx, nearest == null ? List.of() : List.of(nearest));
+    }
+
+    private static int executeReassembleTargets(CommandContext<CommandSourceStack> ctx,
+                                                 List<ServerSubLevel> targets) throws CommandSyntaxException {
         if (targets.isEmpty()) throw ERROR_NO_SUBLEVELS.create();
+        ServerLevel level = ctx.getSource().getLevel();
 
         // Запоминаем мировые позиции ассемблеров ДО дизассемблирования.
         List<BlockPos> positions = new ArrayList<>();
@@ -293,6 +344,49 @@ public class SableDisassembleCommand {
                 }
             }
         }
+    }
+
+    /**
+     * Ближайший к точке загруженный саб-левел ("физ. сущность").
+     * Незагруженные (storage) саб-левели намеренно не сканируются: они не присутствуют
+     * физически рядом с исполнителем, пока не подгружены.
+     */
+    private static ServerSubLevel resolveNearest(ServerLevel level, Vec3 origin) {
+        if (!(level instanceof SubLevelContainerHolder holder)) return null;
+
+        ServerSubLevel nearest = null;
+        double bestDistSq = Double.MAX_VALUE;
+        for (SubLevel sl : holder.sable$getPlotContainer().getAllSubLevels()) {
+            if (!(sl instanceof ServerSubLevel ssl)) continue;
+            Vector3dc center = ssl.boundingBox().center();
+            double dx = center.x() - origin.x;
+            double dy = center.y() - origin.y;
+            double dz = center.z() - origin.z;
+            double distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                nearest = ssl;
+            }
+        }
+        return nearest;
+    }
+
+    /**
+     * Саб-левели, чей мировой bounding box пересекается с положением одной из выбранных
+     * (через vanilla entity-selector, например @a/@e/@p/@r/@s/@n) сущностей.
+     */
+    private static List<ServerSubLevel> resolveByEntities(ServerLevel level, Collection<? extends Entity> entities) {
+        if (!(level instanceof SubLevelContainerHolder holder) || entities.isEmpty()) return List.of();
+        SubLevelContainer container = holder.sable$getPlotContainer();
+
+        Set<ServerSubLevel> matched = new LinkedHashSet<>();
+        for (Entity entity : entities) {
+            BoundingBox3d probe = new BoundingBox3d(entity.getBoundingBox()).expand(0.5);
+            for (SubLevel sl : container.queryIntersecting(probe)) {
+                if (sl instanceof ServerSubLevel ssl) matched.add(ssl);
+            }
+        }
+        return new ArrayList<>(matched);
     }
 
     // -----------------------------------------------------------------------
