@@ -28,8 +28,6 @@ libs/*.jar
 extract/
 simulated_repo/
 
-# AI / Claude Code
-.claude/
 memory/
 
 # Publishing checklist (local only)
